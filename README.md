@@ -160,3 +160,9 @@ For the market signals pipeline, the equivalent extension point is
 `MarketDataAdapter` (`app/ingestion/market_adapter.py`) — see
 [PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md) for details. No
 scraping or real-broker integration is included in this prototype.
+
+## License
+
+[PolyForm Noncommercial License 1.0.0](LICENSE) — free to view, run, and
+modify for noncommercial purposes (evaluation, learning, personal use).
+**Commercial use requires a separate agreement with the author.**
