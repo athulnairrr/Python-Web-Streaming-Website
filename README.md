@@ -31,6 +31,13 @@ WebSocket to a live monitoring dashboard.
   events/sec, average & p95 latency, a rolling value/latency chart, and a
   live event table.
 
+A second prototype — a **market signals dashboard** (OTC + live, with
+Telegram alerts) — is built on the same architecture. It's a separate demo
+page (`client/signals.html`) so the original demo above is untouched; see
+[PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md) for the full picture.
+**All signals are synthetic/mock data — not real market data, not trading
+advice.**
+
 ## Quick start (Docker)
 
 ```bash
@@ -39,6 +46,7 @@ docker compose up --build
 
 Then open **http://localhost:8000** — the dashboard connects automatically
 and you'll see the built-in demo generator streaming ~100 events/sec.
+Open **http://localhost:8000/signals.html** for the market signals demo.
 
 ## Quick start (local Python)
 
@@ -64,6 +72,16 @@ Environment variables (all optional):
 | `FILTER_MIN_VALUE`    | `0`     | Events below this value are dropped by the pipeline   |
 | `QUEUE_MAXSIZE`       | `5000`  | Backpressure limit on the ingestion queue             |
 
+Market signals pipeline (see [PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md)
+for the full list, Telegram setup, and mock-data details):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `OTC_SOURCE_ENABLED` / `LIVE_SOURCE_ENABLED` | `true` | Enable each mock signal source |
+| `OTC_SYMBOLS` / `LIVE_SYMBOLS` | see docs | Comma-separated symbol lists |
+| `SIGNAL_TIMEFRAMES` | `M1,M5` | Comma-separated timeframes signals rotate through |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | unset | Enables the "Send Test Alert" button |
+
 ## API
 
 - `GET /health` — status, connected client count, queue depth, and
@@ -72,6 +90,10 @@ Environment variables (all optional):
   the load test script, and the integration point for a future Kafka/MQTT
   bridge.
 - `WS /ws` — subscribe to the live stream of processed events.
+- `GET /signals/health`, `POST /signals/ingest`, `WS /ws/signals` — the
+  same shape of endpoints for the market signals pipeline.
+- `POST /telegram/test-alert` — sends a test message via the configured
+  Telegram bot/channel; used by the dashboard's test-alert button.
 
 ## Tests
 
@@ -81,8 +103,10 @@ pytest
 
 Covers the filter/aggregate/enrich steps, pipeline chaining and
 short-circuiting, the WebSocket connection manager (fan-out + dead
-connection pruning), and an API smoke test asserting an ingested event
-comes back out over `/ws` fully processed.
+connection pruning), an API smoke test asserting an ingested event comes
+back out over `/ws` fully processed, plus the signal-generation step, the
+Telegram notifier (no real network calls made in tests), and the
+`/signals/*` endpoints. 31 tests in total.
 
 ## Load test (100 events/sec, latency check)
 
@@ -129,3 +153,8 @@ consumer or MQTT client, have it push events onto the same
 `event_queue` used in `app/main.py`, and start it in the `lifespan`
 context manager alongside/instead of `DemoEventSource`. The processing
 and broadcasting layers require no changes.
+
+For the market signals pipeline, the equivalent extension point is
+`MarketDataAdapter` (`app/ingestion/market_adapter.py`) — see
+[PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md) for details. No
+scraping or real-broker integration is included in this prototype.

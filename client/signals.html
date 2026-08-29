@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Market Signals Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Market <span>Signals</span> &mdash; OTC &amp; Live</h1>
+    <a class="nav-link" href="index.html">&larr; Generic Stream Demo</a>
+  </header>
+
+  <main>
+    <div class="disclaimer">
+      &#9888;&#65039; <strong>Prototype demo only.</strong> All signals on this page are generated from
+      synthetic/mock data using a random placeholder strategy. They are <strong>not</strong> real
+      market data, are <strong>not</strong> predictive, and are <strong>not</strong> trading advice.
+      This page exists to demonstrate the real-time data pipeline, not to recommend trades.
+    </div>
+
+    <section class="stats-grid">
+      <div class="stat-card">
+        <div class="label">OTC signals/sec</div>
+        <div class="value" id="otcRate">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Live signals/sec</div>
+        <div class="value" id="liveRate">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Avg latency</div>
+        <div class="value" id="statLatency">&ndash;</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Timeframes</div>
+        <div class="value" id="statTimeframes" style="font-size:16px">&ndash;</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Telegram</div>
+        <div class="value" id="statTelegram" style="font-size:16px">&ndash;</div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:16px">
+      <h2>Telegram Alerts</h2>
+      <button class="btn" id="testAlertBtn">Send Test Alert</button>
+      <div class="telegram-status" id="telegramStatus"></div>
+    </section>
+
+    <section class="columns-2">
+      <div class="panel">
+        <h2>OTC Signals</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>TF</th>
+                <th>Direction</th>
+                <th>Price</th>
+                <th>Time</th>
+                <th>Latency</th>
+              </tr>
+            </thead>
+            <tbody id="otcTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Live Market Signals</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>TF</th>
+                <th>Direction</th>
+                <th>Price</th>
+                <th>Time</th>
+                <th>Latency</th>
+              </tr>
+            </thead>
+            <tbody id="liveTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Synthetic OTC + live-market sources &rarr; pluggable signal-generation step &rarr; WebSocket broadcast.
+    See PROJECT_DOCUMENTATION.md for how a real market/broker adapter plugs in.
+  </footer>
+
+  <script src="signals.js"></script>
+</body>
+</html>

@@ -4,6 +4,18 @@ services:
     ports:
       - "8000:8000"
     environment:
+      # generic demo pipeline
       - DEMO_SOURCE_ENABLED=true
       - DEMO_SOURCE_RATE=100
       - FILTER_MIN_VALUE=0
+      # market signals pipeline (synthetic/mock data)
+      - OTC_SOURCE_ENABLED=true
+      - LIVE_SOURCE_ENABLED=true
+      - OTC_SYMBOLS=EURUSD-OTC,GBPUSD-OTC,USDJPY-OTC,AUDCAD-OTC
+      - LIVE_SYMBOLS=EURUSD,GBPUSD,BTCUSD,ETHUSD
+      - SIGNAL_TIMEFRAMES=M1,M5
+      - OTC_SIGNAL_INTERVAL_SECONDS=3
+      - LIVE_SIGNAL_INTERVAL_SECONDS=4
+      # Telegram test-alert integration - unset by default; fill in to enable
+      - TELEGRAM_BOT_TOKEN=
+      - TELEGRAM_CHAT_ID=
