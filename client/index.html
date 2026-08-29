@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Stream Processing Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Stream<span>Pipe</span> &mdash; Live Monitoring</h1>
+    <div class="status">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">Connecting&hellip;</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="stats-grid">
+      <div class="stat-card">
+        <div class="label">Events / sec</div>
+        <div class="value" id="statRate">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Avg latency</div>
+        <div class="value" id="statLatency">&ndash;</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">p95 latency</div>
+        <div class="value" id="statP95">&ndash;</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Processed</div>
+        <div class="value" id="statProcessed">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Dropped (filtered)</div>
+        <div class="value" id="statDropped">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Connected clients</div>
+        <div class="value" id="statClients">&ndash;</div>
+      </div>
+    </section>
+
+    <section class="panels">
+      <div class="panel">
+        <h2>Live event value &amp; latency (last 60s)</h2>
+        <canvas id="chart" width="800" height="180"></canvas>
+      </div>
+      <div class="panel">
+        <h2>Recent events</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Category</th>
+                <th>Value</th>
+                <th>Mean</th>
+                <th>Latency</th>
+              </tr>
+            </thead>
+            <tbody id="eventTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    FastAPI ingestion &rarr; processing &rarr; broadcasting pipeline, streamed live over WebSocket.
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

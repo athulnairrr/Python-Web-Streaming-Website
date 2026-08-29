@@ -1,0 +1,9 @@
+services:
+  stream-app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DEMO_SOURCE_ENABLED=true
+      - DEMO_SOURCE_RATE=100
+      - FILTER_MIN_VALUE=0
