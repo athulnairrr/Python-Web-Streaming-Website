@@ -1,8 +1,45 @@
 # Python Web Stream Processing
 
-A real-time stream processing pipeline: a synthetic event source is
-ingested, filtered/aggregated/enriched on the fly, and broadcast over
-WebSocket to a live monitoring dashboard.
+A real-time market signals dashboard prototype (OTC + live, with Telegram
+alerts), built on top of a general-purpose real-time stream processing
+engine — ingestion → processing → broadcasting → WebSocket → dashboard.
+
+## Market Signals Dashboard (OTC + Live)
+
+> **Prototype demo only.** All signals are generated from synthetic/mock
+> data using a random placeholder strategy. Nothing here is real market
+> data, nothing is predictive, and nothing here is trading advice.
+
+![Market signals dashboard](docs/signals_dashboard.png)
+
+A second, independent pipeline — built on the exact same architecture as
+the generic engine below — simulates two market data sources (OTC and
+"live") and turns their price data into mock trade signals in real time,
+shown on a dedicated dashboard (`client/signals.html`) with separate
+OTC/Live sections and Telegram alerting.
+
+- **Ingestion**: `OTCMockSource` and `LiveMockSource`
+  (`app/ingestion/`) — synthetic random-walk price generators, each
+  independently configurable (symbols, timeframes, interval).
+  `MarketDataAdapter` is the clean extension point for a real
+  market/broker feed later — no scraping is built in.
+- **Processing**: signal generation is isolated as one pluggable step —
+  `SignalStrategy` → `RandomSignalStrategy` (a placeholder with no
+  predictive value, used only to demonstrate the pipeline end to end).
+- **Broadcasting**: a dedicated `/ws/signals` WebSocket channel.
+- **Telegram**: a working "Send Test Alert" button, configured via
+  `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` environment variables.
+
+See [PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md) (§1) for the full
+architecture, configuration reference, Telegram setup, mock-data caveats,
+and exactly where a real data adapter plugs in.
+
+## Underlying Engine: Generic Stream Processing
+
+A synthetic event source is ingested, filtered/aggregated/enriched on the
+fly, and broadcast over WebSocket to a live monitoring dashboard
+(`client/index.html`). This is the original MVP the market signals
+prototype above is built on top of.
 
 ![Live monitoring dashboard](docs/dashboard.png)
 
@@ -31,24 +68,15 @@ WebSocket to a live monitoring dashboard.
   events/sec, average & p95 latency, a rolling value/latency chart, and a
   live event table.
 
-A second prototype — a **market signals dashboard** (OTC + live, with
-Telegram alerts) — is built on the same architecture. It's a separate demo
-page (`client/signals.html`) so the original demo above is untouched; see
-[PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md) for the full picture.
-**All signals are synthetic/mock data — not real market data, not trading
-advice.**
-
-![Market signals dashboard](docs/signals_dashboard.png)
-
 ## Quick start (Docker)
 
 ```bash
 docker compose up --build
 ```
 
-Then open **http://localhost:8000** — the dashboard connects automatically
-and you'll see the built-in demo generator streaming ~100 events/sec.
-Open **http://localhost:8000/signals.html** for the market signals demo.
+Then open **http://localhost:8000/signals.html** for the market signals
+dashboard, or **http://localhost:8000** for the generic stream demo — both
+connect automatically and start streaming immediately.
 
 ## Quick start (local Python)
 
@@ -61,21 +89,13 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Open **http://localhost:8000**.
+Open **http://localhost:8000/signals.html** or **http://localhost:8000**.
 
 ## Configuration
 
-Environment variables (all optional):
-
-| Variable              | Default | Meaning                                              |
-|-----------------------|---------|-------------------------------------------------------|
-| `DEMO_SOURCE_ENABLED` | `true`  | Run the built-in synthetic generator                  |
-| `DEMO_SOURCE_RATE`    | `100`   | Events/sec produced by the demo generator             |
-| `FILTER_MIN_VALUE`    | `0`     | Events below this value are dropped by the pipeline   |
-| `QUEUE_MAXSIZE`       | `5000`  | Backpressure limit on the ingestion queue             |
-
-Market signals pipeline (see [PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md)
-for the full list, Telegram setup, and mock-data details):
+Market signals pipeline (all optional; see
+[PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md) §1.5 for the full
+list, Telegram setup, and mock-data details):
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -84,18 +104,27 @@ for the full list, Telegram setup, and mock-data details):
 | `SIGNAL_TIMEFRAMES` | `M1,M5` | Comma-separated timeframes signals rotate through |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | unset | Enables the "Send Test Alert" button |
 
+Generic demo pipeline (all optional):
+
+| Variable              | Default | Meaning                                              |
+|-----------------------|---------|-------------------------------------------------------|
+| `DEMO_SOURCE_ENABLED` | `true`  | Run the built-in synthetic generator                  |
+| `DEMO_SOURCE_RATE`    | `100`   | Events/sec produced by the demo generator             |
+| `FILTER_MIN_VALUE`    | `0`     | Events below this value are dropped by the pipeline   |
+| `QUEUE_MAXSIZE`       | `5000`  | Backpressure limit on the ingestion queue             |
+
 ## API
 
-- `GET /health` — status, connected client count, queue depth, and
-  ingested/processed/dropped/events-per-second counters.
-- `POST /ingest` — push a raw event (JSON body) into the pipeline. Used by
-  the load test script, and the integration point for a future Kafka/MQTT
-  bridge.
-- `WS /ws` — subscribe to the live stream of processed events.
 - `GET /signals/health`, `POST /signals/ingest`, `WS /ws/signals` — the
-  same shape of endpoints for the market signals pipeline.
+  market signals pipeline.
 - `POST /telegram/test-alert` — sends a test message via the configured
   Telegram bot/channel; used by the dashboard's test-alert button.
+- `GET /health` — status, connected client count, queue depth, and
+  ingested/processed/dropped/events-per-second counters (generic pipeline).
+- `POST /ingest` — push a raw event (JSON body) into the generic pipeline.
+  Used by the load test script, and the integration point for a future
+  Kafka/MQTT bridge.
+- `WS /ws` — subscribe to the live stream of generic processed events.
 
 ## Tests
 
@@ -103,17 +132,20 @@ for the full list, Telegram setup, and mock-data details):
 pytest
 ```
 
-Covers the filter/aggregate/enrich steps, pipeline chaining and
-short-circuiting, the WebSocket connection manager (fan-out + dead
-connection pruning), an API smoke test asserting an ingested event comes
-back out over `/ws` fully processed, plus the signal-generation step, the
-Telegram notifier (no real network calls made in tests), and the
-`/signals/*` endpoints. 31 tests in total.
+Covers the signal-generation step, the Telegram notifier (no real network
+calls made in tests), and the `/signals/*` endpoints, plus the original
+generic-pipeline coverage: filter/aggregate/enrich steps, pipeline
+chaining and short-circuiting, the WebSocket connection manager (fan-out +
+dead connection pruning), and an API smoke test asserting an ingested
+event comes back out over `/ws` fully processed. 31 tests in total.
 
 ## Load test (100 events/sec, latency check)
 
-With the server running (disable the demo generator first so latency
-numbers aren't mixed with its output):
+This exercises the generic pipeline's `/ingest` → `/ws` path (the market
+signals pipeline shares the same processing/broadcasting code, so the
+same latency characteristics apply there too). With the server running
+(disable the demo generator first so latency numbers aren't mixed with
+its output):
 
 ```bash
 # terminal 1
@@ -150,16 +182,17 @@ process — it only fronts a container running elsewhere.
 
 ## Swapping in a real source later
 
-Implement `EventSource` (see `app/ingestion/base.py`) for your Kafka
-consumer or MQTT client, have it push events onto the same
-`event_queue` used in `app/main.py`, and start it in the `lifespan`
-context manager alongside/instead of `DemoEventSource`. The processing
-and broadcasting layers require no changes.
-
-For the market signals pipeline, the equivalent extension point is
-`MarketDataAdapter` (`app/ingestion/market_adapter.py`) — see
-[PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md) for details. No
+For the market signals pipeline, implement `MarketDataAdapter`
+(`app/ingestion/market_adapter.py`) for a real market/broker feed — see
+[PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md) §1.7 for details. No
 scraping or real-broker integration is included in this prototype.
+
+For the generic pipeline, implement `EventSource`
+(see `app/ingestion/base.py`) for your Kafka consumer or MQTT client, have
+it push events onto the same `event_queue` used in `app/main.py`, and
+start it in the `lifespan` context manager alongside/instead of
+`DemoEventSource`. The processing and broadcasting layers require no
+changes either way.
 
 ## License
 

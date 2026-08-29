@@ -1,6 +1,181 @@
 # Project Documentation — Python Web Stream Processing
 
-## 1. What this application does
+This repo's primary deliverable is the **market signals dashboard
+prototype** (§1), built on top of a general-purpose real-time stream
+processing engine (§2 onward), which it reuses without modification.
+
+---
+
+## 1. Market Signals Prototype (OTC / Live)
+
+> **This is a prototype demo, not a trading system.** Every signal shown is
+> generated from synthetic/mock data using a placeholder strategy that
+> picks a direction at random. Nothing here is real market data, nothing
+> is predictive, and nothing here is trading advice. The purpose of this
+> feature is to demonstrate a real-time data pipeline convincingly, not to
+> produce usable trading signals.
+
+### 1.1 What it adds
+
+A pipeline — built on exactly the same
+ingestion → processing → broadcasting → WebSocket architecture as the
+generic engine described from §2 onward — that simulates two market data
+sources (OTC and "live") and turns their price data into mock trade
+signals in real time, shown on a dedicated dashboard with Telegram
+alerting.
+
+It runs **alongside** the generic engine's own demo, in the same app,
+without modifying it: same `Pipeline`/`ConnectionManager` classes, its own
+`asyncio.Queue`, its own set of endpoints, its own dashboard page.
+
+### 1.2 Architecture and data flow
+
+```
+┌───────────────┐                                  ┌──────────────────┐
+│ OTCMockSource │──┐                                │ signals.html     │
+└───────────────┘  │   asyncio.Queue   ┌──────────┐ │ (OTC | Live      │
+                    ├──────────────────▶│ Pipeline │─▶│  sections)     │
+┌────────────────┐  │                   │ filter → │ │  via /ws/signals│
+│ LiveMockSource │──┘                   │ signal → │ └──────────────────┘
+└────────────────┘                      │ enrich   │
+   (+ POST /signals/ingest)             └──────────┘
+```
+
+- **Ingestion** — `OTCMockSource` and `LiveMockSource`
+  (`app/ingestion/otc_source.py`, `live_source.py`) each run as their own
+  background task, independently generating fake price ticks for their
+  own configurable symbol list, at their own configurable interval. Both
+  push onto the same `signal_queue`, tagging every event with
+  `"source": "otc"` or `"source": "live"` so downstream consumers (and the
+  dashboard) can split them apart. `POST /signals/ingest` is the same kind
+  of external-push entry point `POST /ingest` is for the generic engine.
+- **Processing** — one pipeline (`build_signal_pipeline()` in
+  `app/main.py`) handles both sources: a basic sanity filter, then the
+  **signal-generation step** (§1.3), then the same `enrich_step` used by
+  the generic engine (latency tracking is identical).
+- **Broadcasting** — a dedicated `ConnectionManager` fans processed
+  signals out over `WS /ws/signals`.
+- **Dashboard** — `client/signals.html` / `signals.js` connect to
+  `/ws/signals` and route each incoming event into an "OTC" or "Live"
+  table based on its `source` field, plus a stats bar and a Telegram test
+  button.
+
+### 1.3 Signal shape and modular generation
+
+Every signal broadcast to the dashboard has the same core shape:
+
+```json
+{
+  "id": "otc-482",
+  "source": "otc",
+  "symbol": "EURUSD-OTC",
+  "timeframe": "M1",
+  "direction": "CALL",
+  "confidence": 71.4,
+  "price": 1.08423,
+  "timestamp": "2024-01-01T12:00:00.123456+00:00",
+  "ts_generated": 1699999999.123,
+  "ts_processed": 1699999999.126,
+  "latency_ms": 2.7,
+  "mock": true
+}
+```
+
+`pair/symbol`, `direction`, `timeframe`, and `timestamp` — the four fields
+the brief asked for — are present on every signal, along with the
+`mock: true` flag and the enrichment/latency fields the generic engine
+already provides.
+
+Signal generation itself is isolated in one small, swappable piece:
+`app/processing/signal_steps.py` defines a `SignalStrategy` interface with
+one method, `generate(event) -> event`. The prototype ships
+`RandomSignalStrategy`, which just picks `CALL`/`PUT` uniformly at random
+and a cosmetic confidence score — this is what makes it a prototype and
+not a trading system. Replacing it with a real strategy (technical
+indicators, a model, a rules engine) means writing one new class and
+changing one line in `build_signal_pipeline()`; ingestion, filtering,
+enrichment, broadcasting, and the dashboard all stay exactly the same.
+
+### 1.4 Timeframes
+
+`SIGNAL_TIMEFRAMES` (default `M1,M5`) is a configurable, comma-separated
+list; both mock sources round-robin through it, tagging each emitted
+signal with one of the configured timeframes. **Simplification to be
+transparent about:** the demo does not wait out real candle durations (a
+real M5 candle takes 5 real minutes to close) — `timeframe` here is a
+label for which chart a signal targets, paced instead by
+`OTC_SIGNAL_INTERVAL_SECONDS` / `LIVE_SIGNAL_INTERVAL_SECONDS` (a few
+seconds), so the dashboard stays lively for a demo. A real adapter (§1.7)
+would presumably emit on the real candle boundary instead.
+
+### 1.5 Configuration
+
+All environment variables, all optional:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `OTC_SOURCE_ENABLED` | `true` | Run the synthetic OTC source |
+| `LIVE_SOURCE_ENABLED` | `true` | Run the synthetic live-market source |
+| `OTC_SYMBOLS` | `EURUSD-OTC,GBPUSD-OTC,USDJPY-OTC,AUDCAD-OTC` | Comma-separated OTC symbol list |
+| `LIVE_SYMBOLS` | `EURUSD,GBPUSD,BTCUSD,ETHUSD` | Comma-separated live symbol list |
+| `SIGNAL_TIMEFRAMES` | `M1,M5` | Comma-separated timeframes signals rotate through |
+| `OTC_SIGNAL_INTERVAL_SECONDS` | `3` | Seconds between OTC signal batches |
+| `LIVE_SIGNAL_INTERVAL_SECONDS` | `4` | Seconds between live signal batches |
+| `SIGNAL_QUEUE_MAXSIZE` | `2000` | Backpressure limit on the signal queue |
+| `TELEGRAM_BOT_TOKEN` | unset | Bot token from [@BotFather](https://t.me/BotFather) |
+| `TELEGRAM_CHAT_ID` | unset | Target chat/channel id (or `@channelusername`) |
+
+### 1.6 Telegram setup
+
+1. Message [@BotFather](https://t.me/BotFather) on Telegram, run
+   `/newbot`, and copy the bot token it gives you.
+2. Get a chat id to send to: add the bot to a group/channel (and give it
+   permission to post), or message it directly and read your own numeric
+   user id from `https://api.telegram.org/bot<token>/getUpdates`.
+3. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (in `docker-compose.yml`,
+   your shell, or a `.env` file) and restart the app.
+4. Open the signals dashboard and click **Send Test Alert**. The
+   "Telegram" stat card will read "Configured", and a confirmation message
+   should arrive in the configured chat within a couple of seconds.
+
+If the credentials are missing or wrong, `POST /telegram/test-alert`
+returns `{"ok": false, "error": "..."}` (never a 500), and the dashboard
+shows that error inline — this is the intended, safe fallback state.
+`app/integrations/telegram_bot.py` is a plain `httpx` call to the Telegram
+Bot API's `sendMessage` endpoint; no SDK dependency. Per-signal alerts
+(rather than just the test button) are not wired up by default, since a
+100-events/sec-class demo stream would immediately hit Telegram's rate
+limits — `TelegramNotifier.send_message` is ready to be called from
+`_process_and_broadcast_signals` with throttling if that's wanted later.
+
+### 1.7 Where a real data adapter plugs in
+
+`app/ingestion/market_adapter.py` defines `MarketDataAdapter(EventSource)`
+— a base class with one abstract method, `stream()`, that a real
+integration would subclass. **No scraping and no real-broker integration
+is implemented in this prototype** — this is intentionally just the
+contract:
+
+1. Subclass `MarketDataAdapter`, implement `stream()` to yield events
+   shaped exactly like the mock sources do (`id`, `source`, `symbol`,
+   `timeframe`, `price`, `timestamp`, `ts_generated`).
+2. Instantiate and start it in `app/main.py`'s `lifespan`, pushing onto
+   `app.state.signal_queue` — the same pattern `OTCMockSource` and
+   `LiveMockSource` already follow.
+3. Nothing else changes: the signal-generation step, the pipeline, the
+   broadcasting layer, and the dashboard all consume the same event shape
+   regardless of where it came from. `POST /signals/ingest` is also
+   available if a real adapter prefers to push over HTTP instead of
+   running as a background task.
+
+Building a real Quotex (or any other broker) integration is a distinct,
+follow-on piece of work — it depends entirely on what that provider
+actually offers (an official API vs. anything else) and its terms of
+service, which is why it's deliberately out of scope here.
+
+---
+
+## 2. Underlying Engine: What It Does
 
 This is a real-time data stream processing service. Events arrive continuously,
 are transformed on the fly (filtered, aggregated, enriched), and the results
@@ -13,12 +188,11 @@ demonstrable with no external dependencies. The architecture is deliberately
 laid out so a real source (Kafka, MQTT, etc.) can be dropped in later without
 touching the processing or broadcasting code.
 
-**Sections 1–11 below describe this original generic pipeline, unchanged.**
-A second prototype — a **market signals dashboard** (OTC + live-market,
-with Telegram alerts) — is built on the exact same architecture and runs
-alongside it without modifying it. See **§12** for that prototype.
+**§§2–11 below describe this generic engine.** The market signals prototype
+(§1) is built on top of it, unmodified, running as a second, independent
+pipeline in the same app.
 
-## 2. Architecture and data flow
+## 3. Architecture and data flow
 
 ```
 ┌────────────┐   asyncio.Queue   ┌────────────┐   WebSocket    ┌──────────┐
@@ -37,7 +211,7 @@ There are three independent layers, connected by a single in-process queue:
 
 Each layer only depends on the shape of the data passed between them (plain
 Python dicts), not on how the neighbouring layer is implemented. That's what
-lets the ingestion source be swapped later (see §9) without changing
+lets the ingestion source be swapped later (see §10) without changing
 processing or broadcasting at all.
 
 All shared pipeline state (the queue, the WebSocket connection manager, the
@@ -45,7 +219,7 @@ pipeline instance, running counters) lives on FastAPI's `app.state`, created
 fresh each time the app starts (see `app/main.py`, function `lifespan`).
 There are no other global/module-level mutable objects.
 
-## 3. Ingestion layer (`app/ingestion/`)
+## 4. Ingestion layer (`app/ingestion/`)
 
 - `base.py` defines `EventSource`, an abstract class with one method:
   `async def stream(self) -> AsyncIterator[dict]`. Anything that yields raw
@@ -61,12 +235,12 @@ There are no other global/module-level mutable objects.
   time on a ~50ms tick and emitting however many events are due, rather than
   sleeping once per event — this keeps the long-run rate accurate and avoids
   relying on very short (<10ms) timers, which proved unreliable under load
-  during testing (see §10).
+  during testing (see §11).
 - **External ingestion**: `POST /ingest` accepts a JSON event body and pushes
   it onto the same queue the demo generator uses. This is the integration
   point a load-test script or a future broker bridge uses today.
 
-## 4. Processing layer (`app/processing/`)
+## 5. Processing layer (`app/processing/`)
 
 A `Pipeline` (`pipeline.py`) is an ordered list of steps. Each step is a
 plain function: `event -> event | None`. Returning `None` drops the event
@@ -91,7 +265,7 @@ Steps never mutate their input dict; they return new dicts. This keeps the
 pipeline predictable and easy to unit test (see `tests/test_steps.py`,
 `tests/test_pipeline.py`).
 
-## 5. Broadcasting layer (`app/broadcasting/`)
+## 6. Broadcasting layer (`app/broadcasting/`)
 
 `ConnectionManager` (`manager.py`) tracks connected WebSocket clients in a
 set and exposes `broadcast(event)`, which JSON-serialises the event once and
@@ -100,7 +274,7 @@ disconnected without a clean close), that connection is silently pruned from
 the set on the next broadcast. This is the only place that knows about
 WebSocket clients — the processing pipeline just calls `manager.broadcast(...)`.
 
-## 6. WebSocket flow and dashboard
+## 7. WebSocket flow and dashboard
 
 - The FastAPI route `WS /ws` accepts a connection, registers it with
   `ConnectionManager`, and then just waits (it doesn't expect the client to
@@ -125,7 +299,7 @@ WebSocket clients — the processing pipeline just calls `manager.broadcast(...)
   - The chart and stats are drawn with plain `<canvas>` and vanilla JS — no
     charting library, to keep the page dependency-free and fast to load.
 
-## 7. API endpoints
+## 8. API endpoints
 
 | Endpoint | Method | Purpose |
 |---|---|---|
@@ -134,17 +308,17 @@ WebSocket clients — the processing pipeline just calls `manager.broadcast(...)
 | `/ingest` | POST | Accepts a raw JSON event and pushes it into the pipeline |
 | `/ws` | WebSocket | Subscribes to the live stream of processed events |
 
-## 8. Docker setup
+## 9. Docker setup
 
 - `Dockerfile`: `python:3.12-slim`, installs `requirements.txt`, copies
   `app/` and `client/`, runs `uvicorn app.main:app` on port 8000.
 - `docker-compose.yml`: builds the image, maps port 8000, and sets the
-  three environment variables that control the demo generator and filter
-  (`DEMO_SOURCE_ENABLED`, `DEMO_SOURCE_RATE`, `FILTER_MIN_VALUE`).
+  environment variables that control both the generic demo generator/filter
+  and the market signals pipeline (see §1.5).
 - `docker compose up --build` is the single command to get the whole stack
   running locally or on a host.
 
-## 9. Testing and the 100 events/sec latency test
+## 10. Testing and the 100 events/sec latency test
 
 31 automated tests, run with `pytest`:
 
@@ -181,8 +355,10 @@ Measured result during development: **~99 events/sec sustained, p95 latency
 around 16ms** — well inside the 200ms target. Numbers will vary with
 hardware, but the pipeline itself adds only sub-millisecond overhead per
 event; almost all measured latency is network/scheduling, not processing.
+The market signals pipeline shares this exact processing/broadcasting code,
+so the same latency characteristics apply there too.
 
-## 10. Swapping in Kafka/MQTT later
+## 11. Swapping in Kafka/MQTT later
 
 The ingestion layer is the only piece that needs to change:
 
@@ -202,7 +378,9 @@ way: it's a second ingestion path (external HTTP push) that feeds the exact
 same queue and pipeline as the demo generator, with no special-casing
 downstream.
 
-## 11. Key design decisions
+(For the market signals pipeline's equivalent extension point, see §1.7.)
+
+## 12. Key design decisions
 
 - **`asyncio.Queue` as the seam between ingestion and processing.** It's the
   simplest possible decoupling point for a single-process app, and it's the
@@ -239,171 +417,7 @@ downstream.
   This matches the brief ("first working version," "raw JSON is fine for
   now") and keeps the MVP simple. Adding durable storage or replay would be
   a deliberate next step, not something this version does.
-
----
-
-## 12. Market Signals Prototype (OTC / Live)
-
-> **This is a prototype demo, not a trading system.** Every signal shown is
-> generated from synthetic/mock data using a placeholder strategy that
-> picks a direction at random. Nothing here is real market data, nothing
-> is predictive, and nothing here is trading advice. The purpose of this
-> feature is to demonstrate a real-time data pipeline convincingly, not to
-> produce usable trading signals.
-
-### 12.1 What it adds
-
-A second, independent pipeline — built on exactly the same
-ingestion → processing → broadcasting → WebSocket architecture as the
-generic demo — that simulates two market data sources (OTC and "live")
-and turns their price data into mock trade signals in real time, shown on
-a separate dashboard with Telegram alerting.
-
-It runs **alongside** the original demo pipeline, in the same app, without
-changing it: same `Pipeline`/`ConnectionManager` classes, a second
-`asyncio.Queue`, a second set of endpoints, a second dashboard page.
-
-### 12.2 Architecture and data flow
-
-```
-┌───────────────┐                                  ┌──────────────────┐
-│ OTCMockSource │──┐                                │ signals.html     │
-└───────────────┘  │   asyncio.Queue   ┌──────────┐ │ (OTC | Live      │
-                    ├──────────────────▶│ Pipeline │─▶│  sections)     │
-┌────────────────┐  │                   │ filter → │ │  via /ws/signals│
-│ LiveMockSource │──┘                   │ signal → │ └──────────────────┘
-└────────────────┘                      │ enrich   │
-   (+ POST /signals/ingest)             └──────────┘
-```
-
-- **Ingestion** — `OTCMockSource` and `LiveMockSource`
-  (`app/ingestion/otc_source.py`, `live_source.py`) each run as their own
-  background task, independently generating fake price ticks for their
-  own configurable symbol list, at their own configurable interval. Both
-  push onto the same `signal_queue`, tagging every event with
-  `"source": "otc"` or `"source": "live"` so downstream consumers (and the
-  dashboard) can split them apart. `POST /signals/ingest` is the same kind
-  of external-push entry point `POST /ingest` is for the generic pipeline.
-- **Processing** — one pipeline (`build_signal_pipeline()` in
-  `app/main.py`) handles both sources: a basic sanity filter, then the
-  **signal-generation step** (§12.3), then the same `enrich_step` used by
-  the generic pipeline (latency tracking is identical).
-- **Broadcasting** — a second `ConnectionManager` fans processed signals
-  out over `WS /ws/signals`.
-- **Dashboard** — `client/signals.html` / `signals.js` connect to
-  `/ws/signals` and route each incoming event into an "OTC" or "Live"
-  table based on its `source` field, plus a stats bar and a Telegram test
-  button.
-
-### 12.3 Signal shape and modular generation
-
-Every signal broadcast to the dashboard has the same core shape:
-
-```json
-{
-  "id": "otc-482",
-  "source": "otc",
-  "symbol": "EURUSD-OTC",
-  "timeframe": "M1",
-  "direction": "CALL",
-  "confidence": 71.4,
-  "price": 1.08423,
-  "timestamp": "2024-01-01T12:00:00.123456+00:00",
-  "ts_generated": 1699999999.123,
-  "ts_processed": 1699999999.126,
-  "latency_ms": 2.7,
-  "mock": true
-}
-```
-
-`pair/symbol`, `direction`, `timeframe`, and `timestamp` — the four fields
-the brief asked for — are present on every signal, along with the
-`mock: true` flag and the enrichment/latency fields the generic pipeline
-already provides.
-
-Signal generation itself is isolated in one small, swappable piece:
-`app/processing/signal_steps.py` defines a `SignalStrategy` interface with
-one method, `generate(event) -> event`. The prototype ships
-`RandomSignalStrategy`, which just picks `CALL`/`PUT` uniformly at random
-and a cosmetic confidence score — this is what makes it a prototype and
-not a trading system. Replacing it with a real strategy (technical
-indicators, a model, a rules engine) means writing one new class and
-changing one line in `build_signal_pipeline()`; ingestion, filtering,
-enrichment, broadcasting, and the dashboard all stay exactly the same.
-
-### 12.4 Timeframes
-
-`SIGNAL_TIMEFRAMES` (default `M1,M5`) is a configurable, comma-separated
-list; both mock sources round-robin through it, tagging each emitted
-signal with one of the configured timeframes. **Simplification to be
-transparent about:** the demo does not wait out real candle durations (a
-real M5 candle takes 5 real minutes to close) — `timeframe` here is a
-label for which chart a signal targets, paced instead by
-`OTC_SIGNAL_INTERVAL_SECONDS` / `LIVE_SIGNAL_INTERVAL_SECONDS` (a few
-seconds), so the dashboard stays lively for a demo. A real adapter (§12.6)
-would presumably emit on the real candle boundary instead.
-
-### 12.5 Configuration
-
-All environment variables, all optional:
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `OTC_SOURCE_ENABLED` | `true` | Run the synthetic OTC source |
-| `LIVE_SOURCE_ENABLED` | `true` | Run the synthetic live-market source |
-| `OTC_SYMBOLS` | `EURUSD-OTC,GBPUSD-OTC,USDJPY-OTC,AUDCAD-OTC` | Comma-separated OTC symbol list |
-| `LIVE_SYMBOLS` | `EURUSD,GBPUSD,BTCUSD,ETHUSD` | Comma-separated live symbol list |
-| `SIGNAL_TIMEFRAMES` | `M1,M5` | Comma-separated timeframes signals rotate through |
-| `OTC_SIGNAL_INTERVAL_SECONDS` | `3` | Seconds between OTC signal batches |
-| `LIVE_SIGNAL_INTERVAL_SECONDS` | `4` | Seconds between live signal batches |
-| `SIGNAL_QUEUE_MAXSIZE` | `2000` | Backpressure limit on the signal queue |
-| `TELEGRAM_BOT_TOKEN` | unset | Bot token from [@BotFather](https://t.me/BotFather) |
-| `TELEGRAM_CHAT_ID` | unset | Target chat/channel id (or `@channelusername`) |
-
-### 12.6 Telegram setup
-
-1. Message [@BotFather](https://t.me/BotFather) on Telegram, run
-   `/newbot`, and copy the bot token it gives you.
-2. Get a chat id to send to: add the bot to a group/channel (and give it
-   permission to post), or message it directly and read your own numeric
-   user id from `https://api.telegram.org/bot<token>/getUpdates`.
-3. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (in `docker-compose.yml`,
-   your shell, or a `.env` file) and restart the app.
-4. Open the signals dashboard and click **Send Test Alert**. The
-   "Telegram" stat card will read "Configured", and a confirmation message
-   should arrive in the configured chat within a couple of seconds.
-
-If the credentials are missing or wrong, `POST /telegram/test-alert`
-returns `{"ok": false, "error": "..."}` (never a 500), and the dashboard
-shows that error inline — this is the intended, safe fallback state.
-`app/integrations/telegram_bot.py` is a plain `httpx` call to the Telegram
-Bot API's `sendMessage` endpoint; no SDK dependency. Per-signal alerts
-(rather than just the test button) are not wired up by default, since a
-100-events/sec-class demo stream would immediately hit Telegram's rate
-limits — `TelegramNotifier.send_message` is ready to be called from
-`_process_and_broadcast_signals` with throttling if that's wanted later.
-
-### 12.7 Where a real data adapter plugs in
-
-`app/ingestion/market_adapter.py` defines `MarketDataAdapter(EventSource)`
-— a base class with one abstract method, `stream()`, that a real
-integration would subclass. **No scraping and no real-broker integration
-is implemented in this prototype** — this is intentionally just the
-contract:
-
-1. Subclass `MarketDataAdapter`, implement `stream()` to yield events
-   shaped exactly like the mock sources do (`id`, `source`, `symbol`,
-   `timeframe`, `price`, `timestamp`, `ts_generated`).
-2. Instantiate and start it in `app/main.py`'s `lifespan`, pushing onto
-   `app.state.signal_queue` — the same pattern `OTCMockSource` and
-   `LiveMockSource` already follow.
-3. Nothing else changes: the signal-generation step, the pipeline, the
-   broadcasting layer, and the dashboard all consume the same event shape
-   regardless of where it came from. `POST /signals/ingest` is also
-   available if a real adapter prefers to push over HTTP instead of
-   running as a background task.
-
-Building a real Quotex (or any other broker) integration is a distinct,
-follow-on piece of work — it depends entirely on what that provider
-actually offers (an official API vs. anything else) and its terms of
-service, which is why it's deliberately out of scope here.
+- **Signal generation isolated as one swappable step (§1.3).** The market
+  signals prototype's only "decision-making" code is `RandomSignalStrategy`
+  — a placeholder chosen specifically so replacing it with real logic later
+  never touches ingestion, broadcasting, or the dashboard.
