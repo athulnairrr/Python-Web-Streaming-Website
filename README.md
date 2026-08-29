@@ -38,6 +38,8 @@ page (`client/signals.html`) so the original demo above is untouched; see
 **All signals are synthetic/mock data — not real market data, not trading
 advice.**
 
+![Market signals dashboard](docs/signals_dashboard.png)
+
 ## Quick start (Docker)
 
 ```bash
