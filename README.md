@@ -4,6 +4,8 @@ A real-time stream processing pipeline: a synthetic event source is
 ingested, filtered/aggregated/enriched on the fly, and broadcast over
 WebSocket to a live monitoring dashboard.
 
+![Live monitoring dashboard](docs/dashboard.png)
+
 ```
 ┌────────────┐    asyncio.Queue    ┌────────────┐    WebSocket    ┌──────────┐
 │ Ingestion  │ ──────────────────▶ │ Processing │ ──────────────▶ │ Browser  │
