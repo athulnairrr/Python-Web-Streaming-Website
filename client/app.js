@@ -10,8 +10,6 @@
 const MAX_TABLE_ROWS = 40;
 const MAX_HISTORY = 300; // ~60s at ~5 samples/sec redraw cadence
 
-const statusDot = document.getElementById("statusDot");
-const statusText = document.getElementById("statusText");
 const tableBody = document.getElementById("eventTableBody");
 const statRate = document.getElementById("statRate");
 const statLatency = document.getElementById("statLatency");
@@ -32,14 +30,7 @@ function connect() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${proto}//${location.host}/ws`);
 
-  ws.onopen = () => {
-    statusDot.classList.add("connected");
-    statusText.textContent = "Connected";
-  };
-
   ws.onclose = () => {
-    statusDot.classList.remove("connected");
-    statusText.textContent = "Disconnected – retrying…";
     setTimeout(connect, 1500);
   };
 
